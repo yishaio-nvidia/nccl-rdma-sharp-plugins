@@ -30,11 +30,14 @@ extern ncclCollNet_v8_t ncclCollNetPlugin_v8;
 int ncclNSharpDevs = -1;
 struct sharp_coll_caps sharp_caps;
 static int ncclSharpV3DatatypesSupported = 0;
+static int SharpBarrierSync = 0;
+NCCL_PARAM(SharpBarrierSync, "SHARP_BARRIER_SYNC", 0);
 NCCL_PARAM(SharpGroupSizeThresh, "SHARP_GROUP_SIZE_THRESH", 2);
 NCCL_PARAM(SharpV3Datatypes, "SHARP_V3_DATATYPES", 2);
 NCCL_PARAM(SharpDisableRS, "SHARP_DISABLE_REDUCE_SCATTER", 0);
 NCCL_PARAM(SharpDisableAG, "SHARP_DISABLE_ALLGATHER", 0);
 NCCL_PARAM(enableSharpTrace, "SHARP_COLL_TRACE", 0);
+
 
 enum ncclSharpRequestType {
   NCCL_SHARP_REQ_SHARP_COLL,
@@ -46,6 +49,9 @@ struct ncclSharpRequest {
   void *sharpRequest;
   int  size;
   int  used;
+  void *sharpCollComm;
+  void *barrier_req;
+  int done;
 };
 
 struct ncclSharpListenComm {
@@ -354,6 +360,7 @@ ncclResult_t ncclSharpConnect(void* handles[], int nranks, int rank, void* liste
       WARN("SHARP int8,uint8,bfloat16 Datatypes not supported");
   }
 #endif
+SharpBarrierSync = ncclParamSharpBarrierSync();
 
   INFO(NCCL_INIT, "SHARP rank %d/%d initialized on %s", cComm->rank, nranks, devName);
 
@@ -509,6 +516,10 @@ ncclResult_t ncclSharpIallreduce(void* collComm, void* sendData, void* recvData,
     WARN("SHARP allreduce failed\n");
   }
   req->size =  count * dt_size;
+  req->done = 0;
+  req->sharpCollComm = cComm->sharpCollComm;
+  req->barrier_req = NULL;
+  //WARN("req posted:%p", req);
 #else
   if (SHARP_COLL_SUCCESS != sharp_coll_do_allreduce(cComm->sharpCollComm, &reduce_spec)) {
     WARN("SHARP allreduce failed\n");
@@ -670,9 +681,29 @@ ncclResult_t ncclSharpTest(void* request, int* done, int* size) {
   }
 
 #if BLOCKING==0
-  *done = sharp_coll_req_test(req->sharpRequest);
+  *done =0;
+  if (!req->done) {
+    req->done = sharp_coll_req_test(req->sharpRequest);
+    if (req->done) {
+      //WARN("1. req done:%p flag:%d", req, req->done);
+    }
+  } else {
+    //WARN("2. req done:%p", req);
+    if (req->barrier_req != NULL) {
+      *done = sharp_coll_req_test(req->barrier_req);
+    } else {
+      if (SharpBarrierSync) {
+        sharp_coll_do_barrier_nb(req->sharpCollComm, &req->barrier_req);
+      } else {
+         //WARN("3. req done:%p", req);
+        *done = 1;
+      }
+    }
+  }
+
   if (*done){
     sharp_coll_req_free(req->sharpRequest);
+    if (req->barrier_req) { sharp_coll_req_free(req->barrier_req); }
     *size = req->size;
     req->used = 0;
   } else {
