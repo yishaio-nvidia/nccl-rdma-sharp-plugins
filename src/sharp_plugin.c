@@ -685,12 +685,13 @@ ncclResult_t ncclSharpTest(void* request, int* done, int* size) {
   if (!req->done) {
     req->done = sharp_coll_req_test(req->sharpRequest);
     if (req->done) {
-      //WARN("1. req done:%p flag:%d", req, req->done);
+//      WARN("1. req done:%p flag:%d", req, req->done);
     }
   } else {
     //WARN("2. req done:%p", req);
     if (req->barrier_req != NULL) {
       *done = sharp_coll_req_test(req->barrier_req);
+//      if (*done) WARN("req %p done and barrier_req %p freed", req, req->barrier_req);
     } else {
       if (SharpBarrierSync) {
         sharp_coll_do_barrier_nb(req->sharpCollComm, &req->barrier_req);
