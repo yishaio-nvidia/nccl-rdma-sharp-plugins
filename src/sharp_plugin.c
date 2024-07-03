@@ -37,7 +37,8 @@ NCCL_PARAM(SharpV3Datatypes, "SHARP_V3_DATATYPES", 2);
 NCCL_PARAM(SharpDisableRS, "SHARP_DISABLE_REDUCE_SCATTER", 0);
 NCCL_PARAM(SharpDisableAG, "SHARP_DISABLE_ALLGATHER", 0);
 NCCL_PARAM(enableSharpTrace, "SHARP_COLL_TRACE", 0);
-static const uint64_t MIN_BARRIER_TIME = 400; // According to ChatGPT, 4 uSec is a reasonable time.
+static const uint64_t MIN_BARRIER_TIME = 10; // Based on OSU_IBarrier, we need about 10 uSec for the operation.
+                                             // Note that we apply this delay *in addition* to performing a SHARP-based barrier!
 
 enum ncclSharpRequestType {
   NCCL_SHARP_REQ_SHARP_COLL,
