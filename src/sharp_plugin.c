@@ -37,7 +37,7 @@ NCCL_PARAM(SharpV3Datatypes, "SHARP_V3_DATATYPES", 2);
 NCCL_PARAM(SharpDisableRS, "SHARP_DISABLE_REDUCE_SCATTER", 0);
 NCCL_PARAM(SharpDisableAG, "SHARP_DISABLE_ALLGATHER", 0);
 NCCL_PARAM(enableSharpTrace, "SHARP_COLL_TRACE", 0);
-
+static const uint64_t MIN_BARRIER_TIME = 400; // According to ChatGPT, 4 uSec is a reasonable time.
 
 enum ncclSharpRequestType {
   NCCL_SHARP_REQ_SHARP_COLL,
@@ -52,6 +52,7 @@ struct ncclSharpRequest {
   void *sharpCollComm;
   void *barrier_req;
   int done;
+  struct timeval barrier_issue_time;
 };
 
 struct ncclSharpListenComm {
@@ -124,6 +125,7 @@ static __inline__ enum sharp_reduce_op opConvert(ncclRedOp_t op) {
     default: return SHARP_OP_NULL;
   }
 }
+
 
 int ncclSharpAllGather(void *context, void *buf, int len) {
   struct ncclSharpCollComm* cComm = (struct ncclSharpCollComm*)context;
@@ -691,10 +693,14 @@ ncclResult_t ncclSharpTest(void* request, int* done, int* size) {
     //WARN("2. req done:%p", req);
     if (req->barrier_req != NULL) {
       *done = sharp_coll_req_test(req->barrier_req);
+      struct timeval now;
+      gettimeofday(&now, NULL);
+      if (SharpBarrierSync && (now.tv_sec * 1000000 + now.tv_usec) - (req->barrier_issue_time.tv_sec * 1000000 + req->barrier_issue_time.tv_usec) <= MIN_BARRIER_TIME) {*done = 0;}
 //      if (*done) WARN("req %p done and barrier_req %p freed", req, req->barrier_req);
     } else {
       if (SharpBarrierSync) {
         sharp_coll_do_barrier_nb(req->sharpCollComm, &req->barrier_req);
+        gettimeofday(&req->barrier_issue_time, NULL);
       } else {
          //WARN("3. req done:%p", req);
         *done = 1;
@@ -737,7 +743,7 @@ ncclResult_t ncclSharpCloseColl(void* collComm) {
 ncclResult_t ncclSharpCloseListen(void* listenComm) {
   struct ncclSharpListenComm *lComm = (struct ncclSharpListenComm*)listenComm;
   ncclResult_t status;
-
+  if (SharpBarrierSync) WARN("Resiliency POC forced minimum wait time of %lld uSec", MIN_BARRIER_TIME);
   status = ncclNetPlugin_v8.closeListen(lComm->listenCommP2P);
   free(listenComm);
   return status;
